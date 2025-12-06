@@ -90,10 +90,15 @@ void aligned_free(void* ptr) {
     _aligned_free(ptr);
 }
 
-// fills buffer w/ test pattern, only runs once
-void generatePattern(char* data, size_t blockSize) {
+// fills buffer w/ test pattern unique to position
+void generatePattern(char* data, size_t blockSize, LONGLONG position) {
+    // use position to seed pattern so each location has unique data
+    unsigned char posBytes[8];
+    memcpy(posBytes, &position, 8);
+
     for (size_t j = 0; j < blockSize; ++j) {
-        data[j] = static_cast<char>((j * 7 + 13) % 256);
+        // mix position into pattern - detects address aliasing
+        data[j] = static_cast<char>((j * 7 + 13 + posBytes[j % 8]) % 256);
     }
 }
 
@@ -105,6 +110,9 @@ bool testPosition(HANDLE hDrive, LONGLONG position, char* data, char* readBuffer
 
     // align to sector
     pos.QuadPart = position - (position % sectorSize);
+
+    // generate position-unique pattern
+    generatePattern(data, blockSize, pos.QuadPart);
 
     SetFilePointerEx(hDrive, pos, NULL, FILE_BEGIN);
     if (!WriteFile(hDrive, data, static_cast<DWORD>(blockSize), &bytesWritten, NULL)) {
@@ -181,7 +189,7 @@ int main() {
         return 0;
     }
 
-    std::wcout << L"Welcome to Flashmark | v3.1.0 | Developed by Brent Wadleigh" << std::endl;
+    std::wcout << L"Welcome to Flashmark | v1.1.0 | Developed by Brent Wadleigh" << std::endl;
     std::wcout << L"-----------------------------------------------------------" << std::endl;
 
     int driveNumber;
@@ -273,12 +281,11 @@ int main() {
         return 1;
     }
 
-    // gen pattern once instead of every iteration
-    generatePattern(data, blockSize);
+    // pattern now generated per-position in testPosition()
 
     // clear and show header
     system("cls");
-    std::wcout << L"Welcome to Flashmark | v3.1.0 | Developed by Brent Wadleigh" << std::endl;
+    std::wcout << L"Welcome to Flashmark | v1.1.0 | Developed by Brent Wadleigh" << std::endl;
     std::wcout << L"-----------------------------------------------------------" << std::endl;
     std::wcout << L"Claimed Capacity: " << totalSize / (1024 * 1024) << L" MB ("
                << totalSize / (1024 * 1024 * 1024) << L" GB)" << std::endl;
@@ -377,25 +384,39 @@ int main() {
         isFake = true;
     }
 
-    // results
-    std::wcout << L"\n-----------------------------------------------------------" << std::endl;
-    std::cout << "Tests performed: " << testsPerformed << std::endl;
-    std::wcout << L"Claimed Capacity: " << totalSize / (1024 * 1024) << L" MB" << std::endl;
+    // clear screen and show final results
+    system("cls");
 
     size_t roundedSize = roundToNearestLogicalSize(estimatedTrueSize / (1024 * 1024));
-    std::cout << "Estimated Capacity: " << roundedSize / 1024 << " GB (" << roundedSize << " MB)" << std::endl;
-
     double percentDiff = 100.0 * llabs(estimatedTrueSize - totalSize) / totalSize;
+    bool isValid = (percentDiff <= 10.0 && !isFake);
 
-    if (percentDiff <= 10.0 && !isFake) {
-        std::cout << "\nResult: Drive is VALID." << std::endl;
+    std::cout << "==============================================================" << std::endl;
+    std::cout << "  Flashmark | v1.1.0 | Developed by Brent Wadleigh" << std::endl;
+    std::cout << "==============================================================" << std::endl;
+    std::cout << std::endl;
+
+    if (isValid) {
+        std::cout << "  [PASS] Drive is VALID" << std::endl;
     } else {
-        std::cout << "\nResult: Drive is COUNTERFEIT." << std::endl;
-        std::cout << "   Claimed: " << totalSize / (1024 * 1024 * 1024) << " GB" << std::endl;
-        std::cout << "   Actual:  " << roundedSize / 1024 << " GB" << std::endl;
+        std::cout << "  [FAIL] Drive is COUNTERFEIT" << std::endl;
     }
 
-    std::cout << "\nCompleted Tests. Thanks for using Flashmark!" << std::endl;
+    std::cout << std::endl;
+    std::cout << "--------------------------------------------------------------" << std::endl;
+    std::cout << "  Claimed Capacity:    " << totalSize / (1024 * 1024 * 1024) << " GB" << std::endl;
+    std::cout << "  Actual Capacity:     " << roundedSize / 1024 << " GB" << std::endl;
+    std::cout << "  Tests Performed:     " << testsPerformed << std::endl;
+    std::cout << "--------------------------------------------------------------" << std::endl;
+
+    if (!isValid) {
+        std::cout << std::endl;
+        std::cout << "  WARNING: This drive reports a false capacity." << std::endl;
+        std::cout << "  Data written beyond " << roundedSize / 1024 << " GB may be lost or corrupted." << std::endl;
+    }
+
+    std::cout << std::endl;
+    std::cout << "Press Enter to exit...";
 
     aligned_free(data);
     aligned_free(readBuffer);
